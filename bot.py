@@ -1,67 +1,70 @@
-import logging
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
-import aiosqlite
+from aiogram import Bot, types
+from aiogram.dispatcher import FSMContext, Dispatcher
+from aiogram.dispatcher.filters import Command
+from aiogram.dispatcher.filters.state import State, StatesGroup
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.contrib.fsm_storage.redis import RedisStorage2
 
-# Конфигурация
+
+
+import sqlite3
+import re
+
 API_TOKEN = '5849978203:AAFutW7QmgnkuYglaljG2iwx-rE7IyFkOIs'
+DATABASE = "marihuana.db"
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
-
-# Инициализация бота и диспетчера
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
+storage = RedisStorage2()
+dp = Dispatcher(bot, storage=storage)
 
-# ------- База данных -------
-async def add_user(username, chat_id):
-    """Добавление нового пользователя в базу данных"""
-    async with aiosqlite.connect("mydatabase.db") as db:
-        await db.execute("INSERT OR IGNORE INTO users (username, chat_id) VALUES (?, ?)", (username, chat_id))
-        await db.commit()
+class SortOrder(StatesGroup):
+    choosing_sort = State()
+    waiting_for_grams = State()
 
-async def get_user(chat_id):
-    """Получение информации о пользователе по chat_id"""
-    async with aiosqlite.connect("mydatabase.db") as db:
-        cursor = await db.execute("SELECT * FROM users WHERE chat_id = ?", (chat_id,))
-        user = await cursor.fetchone()
-        return user
+async def get_sorts_from_db():
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name, description, photo_path FROM sorts")
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
 
-async def get_all_sorts():
-    """Получение всех сортов из базы данных"""
-    async with aiosqlite.connect("mydatabase.db") as db:
-        cursor = await db.execute("SELECT * FROM sorts")
-        sorts = await cursor.fetchall()
-        return sorts
-
-# ------- Обработчики команд -------
-
-@dp.message_handler(commands=['start'])
+@dp.message_handler(Command("start"))
 async def cmd_start(message: types.Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await add_user(message.from_user.username, message.from_user.id)
-    markup = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("Заказать"))
-    with open("photos/foto0.jpg", "rb") as photo:
-        await bot.send_photo(message.chat.id, photo, caption="Доставка Шишек по острову Панган!", reply_markup=markup)
+    markup = ReplyKeyboardMarkup(resize_keyboard=True, selective=True)
+    markup.add(KeyboardButton("Заказать"))
+    await message.answer("Приветствие!", reply_markup=markup)
 
-    # Отображение всех сортов после добавления пользователя
-    sorts = await get_all_sorts()
-    for sort in sorts:
-        with open(sort[4], "rb") as photo:  # sort[4] содержит путь к фото
-            caption = f"{sort[1]}\nОписание: {sort[2]}\nЦена: {sort[3]}$"
-            await bot.send_photo(message.chat.id, photo, caption=caption)
+@dp.message_handler(lambda message: message.text == 'Заказать')
+async def choose_sort(message: types.Message):
+    sorts = await get_sorts_from_db()
+    markup = InlineKeyboardMarkup()
+    for sort_name, description, _ in sorts:
+        markup.add(InlineKeyboardButton(text=sort_name, callback_data=sort_name))
+    await message.answer("Выберите сорт:", reply_markup=markup)
+    await SortOrder.choosing_sort.set()
 
-@dp.message_handler(commands=['start'])
-async def cmd_start(message: types.Message):
-    user = await get_user(message.from_user.id)
-    if not user:
-        await add_user(message.from_user.username, message.from_user.id)
-    markup = ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("Заказать"))
-    with open("photos/foto0.jpg", "rb") as photo:
-        await bot.send_photo(message.chat.id, photo, caption="Доставка Шишек по острову Панган!", reply_markup=markup)
+@dp.callback_query_handler(lambda c: c.data and c.data in [row[0] for row in get_sorts_from_db()], state=SortOrder.choosing_sort)
+async def process_sort_chosen(callback_query: types.CallbackQuery, state: FSMContext):
+    await bot.answer_callback_query(callback_query.id)
+    await bot.send_message(callback_query.from_user.id, f"Вы выбрали {callback_query.data}. Сколько грамм?")
+    await SortOrder.waiting_for_grams.set()
+    await state.update_data(sort=callback_query.data)
 
-# ------- Запуск -------
+@dp.message_handler(lambda message: re.match(r"^\d+$", message.text), state=SortOrder.waiting_for_grams)
+async def process_grams(message: types.Message, state: FSMContext):
+    grams = int(message.text)
+    order_data = await state.get_data()
+    # Запись данных в вашу БД здесь...
+    conn = sqlite3.connect(DATABASE)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO orders (customer, sort_order, gramm_order) VALUES (?, ?, ?)", (message.from_user.id, order_data['sort'], grams))
+    conn.commit()
+    conn.close()
+    await message.answer(f"Заказ на {grams} грамм {order_data['sort']} принят!")
+    await state.finish()
+
 if __name__ == '__main__':
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
