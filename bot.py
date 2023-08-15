@@ -19,42 +19,56 @@ class SortOrder(StatesGroup):
     choosing_sort = State()
     waiting_for_grams = State()
 
+# Получение сортов из базы данных, включая ID
 async def get_sorts_from_db():
     conn = sqlite3.connect(DATABASE)
     cursor = conn.cursor()
-    cursor.execute("SELECT name, description, photo_path FROM sorts")
+    cursor.execute("SELECT id, name, description, photo_path FROM sorts")
     rows = cursor.fetchall()
     conn.close()
     return rows
 
-async def sort_filter(callback_query: types.CallbackQuery):
-    sorts = await get_sorts_from_db()
-    return callback_query.data and callback_query.data in [row[0] for row in sorts]
+# Фильтр для обработчика callback-запросов сортов
+async def sort_info_filter(callback_query: types.CallbackQuery):
+    return callback_query.data.startswith("info_")
 
 @dp.message_handler(Command("start"))
 async def cmd_start(message: types.Message):
-    greeting_text = "Доставка Шишек по острову Панган!"
-    await message.answer(greeting_text)
-
-    sorts = await get_sorts_from_db()
-    for sort_name, description, photo_path in sorts:
-        sort_info = f"{sort_name}\nОписание: {description}"
-        await message.answer_photo(photo=open(photo_path, 'rb'), caption=sort_info)
-
+    # Отправляем приветственное фото
+    await message.answer_photo(photo=open('photos/foto0.jpg', 'rb'), caption="Доставка Шишек по острову Панган!")
     markup = ReplyKeyboardMarkup(resize_keyboard=True, selective=True)
     markup.add(KeyboardButton("Заказать"))
+    markup.add(KeyboardButton("Сорта"))  # Добавляем кнопку "Сорта"
     await message.answer("Выберите действие:", reply_markup=markup)
+
+@dp.message_handler(lambda message: message.text == 'Сорта')
+async def show_sorts(message: types.Message):
+    sorts = await get_sorts_from_db()
+    markup = InlineKeyboardMarkup()
+    for sort_id, sort_name, _, _ in sorts:
+        markup.add(InlineKeyboardButton(text=sort_name, callback_data=f"info_{sort_id}"))
+    await message.answer("Выберите сорт для просмотра информации:", reply_markup=markup)
 
 @dp.message_handler(lambda message: message.text == 'Заказать')
 async def choose_sort(message: types.Message):
     sorts = await get_sorts_from_db()
     markup = InlineKeyboardMarkup()
-    for sort_name, description, _ in sorts:
+    for sort_id, sort_name, _, _ in sorts:
         markup.add(InlineKeyboardButton(text=sort_name, callback_data=sort_name))
     await message.answer("Выберите сорт:", reply_markup=markup)
     await SortOrder.choosing_sort.set()
 
-@dp.callback_query_handler(sort_filter, state=SortOrder.choosing_sort)
+@dp.callback_query_handler(sort_info_filter)
+async def show_sort_info(callback_query: types.CallbackQuery):
+    sort_id = int(callback_query.data[5:])
+    sorts = await get_sorts_from_db()
+    for _id, name, description, _ in sorts:
+        if _id == sort_id:
+            await bot.answer_callback_query(callback_query.id)
+            await bot.send_message(callback_query.from_user.id, f"{name}\nОписание: {description}")
+            return
+
+@dp.callback_query_handler(lambda callback_query: not callback_query.data.startswith("info_"), state=SortOrder.choosing_sort)
 async def process_sort_chosen(callback_query: types.CallbackQuery, state: FSMContext):
     await bot.answer_callback_query(callback_query.id)
     await bot.send_message(callback_query.from_user.id, f"Вы выбрали {callback_query.data}. Сколько грамм?")
