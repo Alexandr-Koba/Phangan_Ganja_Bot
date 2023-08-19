@@ -1,60 +1,53 @@
 import aiosqlite
 
-DATABASE = "marihuana.db"
+# Создание таблицы продуктов
+CREATE_PRODUCTS_TABLE = """
+CREATE TABLE IF NOT EXISTS products (
+    product_id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    price REAL NOT NULL
+);
+"""
 
-async def create_database():
-    async with aiosqlite.connect(DATABASE) as conn:
-        cursor = await conn.cursor()
+# Создание корзины для каждого пользователя
+CREATE_CART_ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS cart_items (
+    cart_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    FOREIGN KEY (product_id) REFERENCES products(product_id),
+    UNIQUE (cart_id, product_id)
+);
+"""
 
-        await cursor.execute('''
-        CREATE TABLE IF NOT EXISTS sorts (
-            id INTEGER PRIMARY KEY,
-            name TEXT,
-            description TEXT,
-            price INTEGER,
-            photo_path TEXT
-        )
-        ''')
+# Создание таблицы заказов
+CREATE_ORDERS_TABLE = """
+CREATE TABLE IF NOT EXISTS orders (
+    order_id INTEGER PRIMARY KEY,
+    user_id INTEGER NOT NULL
+);
+"""
 
-        await cursor.execute("INSERT INTO sorts (name, description, price, photo_path) VALUES (?, ?, ?, ?)",
-              ("Afgan Kush", "Описание Afgan Kush", 250, "photos/foto1.jpg"))
-
-        await cursor.execute("INSERT INTO sorts (name, description, price, photo_path) VALUES (?, ?, ?, ?)",
-              ("Gorilla Glue", "Описание Gorilla Glue", 300, "photos/foto2.jpg"))
-
-        await cursor.execute("INSERT INTO sorts (name, description, price, photo_path) VALUES (?, ?, ?, ?)",
-              ("Bruce Buner", "Описание Bruce Buner", 350, "photos/foto3.jpg"))
-
-        await cursor.execute('''
-        CREATE TABLE IF NOT EXISTS making_order (
-            user_contact INTEGER,
-            sort_order TEXT,
-            gramm INTEGER
-        )
-        ''')
-
-        await cursor.execute('''
-        CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY,
-            customer INTEGER,
-            sort_order TEXT,
-            gramm_order INTEGER
-        )
-        ''')
-
-        await cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY,
-            username TEXT,
-            chat_id INTEGER UNIQUE
-        )
-        ''')
-
-        await conn.commit()
+# Создание таблицы элементов заказа
+CREATE_ORDER_ITEMS_TABLE = """
+CREATE TABLE IF NOT EXISTS order_items (
+    order_id INTEGER NOT NULL,
+    product_id INTEGER NOT NULL,
+    quantity INTEGER NOT NULL,
+    FOREIGN KEY (order_id) REFERENCES orders(order_id),
+    FOREIGN KEY (product_id) REFERENCES products(product_id)
+);
+"""
 
 async def main():
-    await create_database()
-    print("База данных и таблицы успешно созданы!")
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute(CREATE_PRODUCTS_TABLE)
+        await cursor.execute(CREATE_CART_ITEMS_TABLE)
+        await cursor.execute(CREATE_ORDERS_TABLE)
+        await cursor.execute(CREATE_ORDER_ITEMS_TABLE)
+        await db.commit()
 
-import asyncio
-asyncio.run(main())
+if __name__ == "__main__":
+    import asyncio
+    asyncio.run(main())

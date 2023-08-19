@@ -1,91 +1,142 @@
-from aiogram import Bot, types
-from aiogram.dispatcher import FSMContext, Dispatcher
-from aiogram.dispatcher.filters import Command
-from aiogram.dispatcher.filters.state import State, StatesGroup
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
-from aiogram.contrib.middlewares.logging import LoggingMiddleware
-from aiogram.contrib.fsm_storage.redis import RedisStorage2
-import sqlite3
-import re
+import logging
+import aiosqlite
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
+import os
+from dotenv import load_dotenv
 
-API_TOKEN = '5849978203:AAFutW7QmgnkuYglaljG2iwx-rE7IyFkOIs'
-DATABASE = "marihuana.db"
+load_dotenv()
+API_TOKEN = os.getenv('TELEGRAM_TOKEN')
+OWNER_ID = int(os.getenv('OWNER_ID'))
+
+logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_TOKEN)
-storage = RedisStorage2()
-dp = Dispatcher(bot, storage=storage)
+dp = Dispatcher(bot)
 
-class SortOrder(StatesGroup):
-    choosing_sort = State()
-    waiting_for_grams = State()
+# Основная клавиатура для пользователя
+main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+main_kb.add(KeyboardButton("Посмотреть товары"), KeyboardButton("Просмотреть корзину"))
+main_kb.add(KeyboardButton("Оформить заказ"))
 
-# Получение сортов из базы данных, включая ID
-async def get_sorts_from_db():
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, name, description, photo_path FROM sorts")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
+# Клавиатура для выбора действия после добавления товара в корзину
+choose_next_action_kb = ReplyKeyboardMarkup(resize_keyboard=True)
+choose_next_action_kb.add(KeyboardButton("Добавить еще?"))
+choose_next_action_kb.add(KeyboardButton("Оформить заказ"))
 
-# Фильтр для обработчика callback-запросов сортов
-async def sort_info_filter(callback_query: types.CallbackQuery):
-    return callback_query.data.startswith("info_")
-
-@dp.message_handler(Command("start"))
+@dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    # Отправляем приветственное фото
-    await message.answer_photo(photo=open('photos/foto0.jpg', 'rb'), caption="Доставка Шишек по острову Панган!")
-    markup = ReplyKeyboardMarkup(resize_keyboard=True, selective=True)
-    markup.add(KeyboardButton("Заказать"))
-    markup.add(KeyboardButton("Сорта"))  # Добавляем кнопку "Сорта"
-    await message.answer("Выберите действие:", reply_markup=markup)
+    await message.answer("Добро пожаловать в магазин! Что вы хотите сделать?", reply_markup=main_kb)
 
-@dp.message_handler(lambda message: message.text == 'Сорта')
-async def show_sorts(message: types.Message):
-    sorts = await get_sorts_from_db()
-    markup = InlineKeyboardMarkup()
-    for sort_id, sort_name, _, _ in sorts:
-        markup.add(InlineKeyboardButton(text=sort_name, callback_data=f"info_{sort_id}"))
-    await message.answer("Выберите сорт для просмотра информации:", reply_markup=markup)
+@dp.message_handler(lambda msg: msg.text == "Посмотреть товары")
+async def view_products(message: types.Message):
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute("SELECT name, price FROM products")
+        products = await cursor.fetchall()
 
-@dp.message_handler(lambda message: message.text == 'Заказать')
-async def choose_sort(message: types.Message):
-    sorts = await get_sorts_from_db()
-    markup = InlineKeyboardMarkup()
-    for sort_id, sort_name, _, _ in sorts:
-        markup.add(InlineKeyboardButton(text=sort_name, callback_data=sort_name))
-    await message.answer("Выберите сорт:", reply_markup=markup)
-    await SortOrder.choosing_sort.set()
-
-@dp.callback_query_handler(sort_info_filter)
-async def show_sort_info(callback_query: types.CallbackQuery):
-    sort_id = int(callback_query.data[5:])
-    sorts = await get_sorts_from_db()
-    for _id, name, description, _ in sorts:
-        if _id == sort_id:
-            await bot.answer_callback_query(callback_query.id)
-            await bot.send_message(callback_query.from_user.id, f"{name}\nОписание: {description}")
+        if not products:
+            await message.answer("Извините, товары отсутствуют!")
             return
 
-@dp.callback_query_handler(lambda callback_query: not callback_query.data.startswith("info_"), state=SortOrder.choosing_sort)
-async def process_sort_chosen(callback_query: types.CallbackQuery, state: FSMContext):
-    await bot.answer_callback_query(callback_query.id)
-    await bot.send_message(callback_query.from_user.id, f"Вы выбрали {callback_query.data}. Сколько грамм?")
-    await SortOrder.waiting_for_grams.set()
-    await state.update_data(sort=callback_query.data)
+        # Создаем клавиатуру с кнопками для каждого товара
+        keyboard = ReplyKeyboardMarkup(resize_keyboard=True)
+        for name, _ in products:
+            btn = KeyboardButton(f"Добавить {name} в корзину")
+            keyboard.add(btn)
 
-@dp.message_handler(lambda message: re.match(r"^\d+$", message.text), state=SortOrder.waiting_for_grams)
-async def process_grams(message: types.Message, state: FSMContext):
-    grams = int(message.text)
-    order_data = await state.get_data()
-    conn = sqlite3.connect(DATABASE)
-    cursor = conn.cursor()
-    cursor.execute("INSERT INTO orders (customer, sort_order, gramm_order) VALUES (?, ?, ?)", (message.from_user.id, order_data['sort'], grams))
-    conn.commit()
-    conn.close()
-    await message.answer(f"Заказ на {grams} грамм {order_data['sort']} принят!")
-    await state.finish()
+        await message.answer("Выберите товар для добавления в корзину:", reply_markup=keyboard)
+
+
+@dp.message_handler(lambda msg: "Добавить" in msg.text and "в корзину" in msg.text)
+async def add_to_cart(message: types.Message):
+    # Измененная логика извлечения имени продукта
+    product_name = " ".join(message.text.split()[1:-2])
+
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+
+        # Используем LOWER() для избежания проблем с регистрозависимостью
+        await cursor.execute("SELECT product_id FROM products WHERE LOWER(name)=?", (product_name.lower(),))
+        product_id = await cursor.fetchone()
+
+        if not product_id:
+            await message.answer("Такого товара нет в наличии!")
+            return
+
+        await cursor.execute(
+            "INSERT INTO cart_items(cart_id, product_id, quantity) VALUES(?, ?, 1) ON CONFLICT(cart_id, product_id) DO UPDATE SET quantity = quantity + 1",
+            (message.from_user.id, product_id[0]))
+        await db.commit()
+
+    await message.answer(f"{product_name} добавлен в вашу корзину!", reply_markup=choose_next_action_kb)
+
+
+@dp.message_handler(lambda msg: msg.text == "Добавить еще?")
+async def add_more(message: types.Message):
+    await view_products(message)
+
+@dp.message_handler(lambda msg: msg.text == "Оформить заказ")
+async def start_checkout(message: types.Message):
+    await message.answer("Вы уверены, что хотите оформить заказ?",
+                         reply_markup=ReplyKeyboardMarkup(resize_keyboard=True).add(KeyboardButton("Подтвердить заказ"),
+                                                                                    KeyboardButton("Отменить заказ")))
+
+@dp.message_handler(lambda msg: msg.text == "Подтвердить заказ")
+async def confirm_checkout(message: types.Message):
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute("INSERT INTO orders(user_id) VALUES(?)", (message.from_user.id,))
+        order_id = cursor.lastrowid
+        await cursor.execute("""
+        INSERT INTO order_items(order_id, product_id, quantity)
+        SELECT ?, product_id, quantity FROM cart_items WHERE cart_id=?
+        """, (order_id, message.from_user.id))
+        await cursor.execute("DELETE FROM cart_items WHERE cart_id=?", (message.from_user.id,))
+        await db.commit()
+
+    await message.answer("Ваш заказ оформлен!", reply_markup=main_kb)
+
+    await cursor.execute("""
+    SELECT name, price, order_items.quantity
+    FROM order_items
+    JOIN products ON order_items.product_id = products.product_id
+    WHERE order_id=?
+    """, (order_id,))
+    items = await cursor.fetchall()
+
+    order_details = "\n".join([f"{name} - {price}₽ (x{quantity})" for name, price, quantity in items])
+    await bot.send_message(OWNER_ID,
+                           f"Новый заказ от {message.from_user.full_name} ({message.from_user.id}):\n\n{order_details}")
+
+
+@dp.message_handler(lambda msg: msg.text == "Просмотреть корзину")
+async def view_cart(message: types.Message):
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+
+        await cursor.execute("""
+        SELECT name, price, cart_items.quantity
+        FROM cart_items
+        JOIN products ON cart_items.product_id = products.product_id
+        WHERE cart_id=?
+        """, (message.from_user.id,))
+
+        items = await cursor.fetchall()
+
+        if not items:
+            await message.answer("Ваша корзина пуста!")
+            return
+
+        cart_details = "\n".join([f"{name} - {price}₽ (x{quantity})" for name, price, quantity in items])
+        total_price = sum([price * quantity for _, price, quantity in items])
+
+        await message.answer(f"Ваша корзина:\n\n{cart_details}\n\nОбщая сумма: {total_price}₽", reply_markup=main_kb)
+
+
+@dp.message_handler(lambda msg: msg.text == "Отменить заказ")
+async def cancel_checkout(message: types.Message):
+    await message.answer("Заказ отменен", reply_markup=main_kb)
 
 if __name__ == '__main__':
     from aiogram import executor
