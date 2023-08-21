@@ -170,6 +170,16 @@ async def confirm_checkout(message: types.Message):
         await cursor.execute("DELETE FROM cart_items WHERE cart_id=?", (message.from_user.id,))
         await db.commit()
 
+    # Получить детали заказа
+    order_details = await get_order_details(order_id)
+
+    # Формирование ссылки на пользователя
+    user_mention = f"[{message.from_user.full_name}](tg://user?id={message.from_user.id})"
+
+    # Отправляем детали заказа владельцу бота с ссылкой на пользователя
+    await bot.send_message(OWNER_ID, f"Новый заказ №{order_id} от {user_mention}:\n{order_details}",
+                           parse_mode="Markdown")
+
     await message.answer("Ваш заказ оформлен! В ближайшее время с вами свяжется наш менеджер.", reply_markup=main_kb)
 
 
@@ -177,6 +187,25 @@ async def confirm_checkout(message: types.Message):
 @dp.message_handler(lambda msg: msg.text == "Отменить заказ")
 async def cancel_checkout(message: types.Message):
     await message.answer("Заказ отменен", reply_markup=main_kb)
+
+
+async def get_order_details(order_id):
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute("""
+            SELECT products.name, order_items.quantity, products.price
+            FROM order_items
+            JOIN products ON order_items.product_id = products.product_id
+            WHERE order_id=?
+        """, (order_id,))
+
+        items = await cursor.fetchall()
+
+    details = []
+    for name, quantity, price in items:
+        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
+
+    return "\n".join(details)
 
 
 # Здесь мы инициализируем Redis
