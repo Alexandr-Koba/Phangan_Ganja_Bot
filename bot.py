@@ -29,6 +29,7 @@ main_kb.add(KeyboardButton("Посмотреть товары"))
 choose_next_action_kb = ReplyKeyboardMarkup(resize_keyboard=True)
 choose_next_action_kb.add(KeyboardButton("Добавить еще?"))
 choose_next_action_kb.add(KeyboardButton("Оформить заказ"))
+choose_next_action_kb.add(KeyboardButton("Отменить заказ"))
 
 # Обработчик команды /start
 @dp.message_handler(commands=['start'])
@@ -186,7 +187,12 @@ async def confirm_checkout(message: types.Message):
 # Обработчик команды "Отменить заказ"
 @dp.message_handler(lambda msg: msg.text == "Отменить заказ")
 async def cancel_checkout(message: types.Message):
-    await message.answer("Заказ отменен", reply_markup=main_kb)
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute("DELETE FROM cart_items WHERE cart_id=?", (message.from_user.id,))
+        await db.commit()
+
+    await message.answer("Заказ отменен и ваша корзина очищена.", reply_markup=main_kb)
 
 
 async def get_order_details(order_id):
