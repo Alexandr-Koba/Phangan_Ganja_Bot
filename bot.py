@@ -23,7 +23,7 @@ dp = Dispatcher(bot)
 
 # Основная клавиатура для пользователя
 main_kb = ReplyKeyboardMarkup(resize_keyboard=True)
-main_kb.add(KeyboardButton("Посмотреть товары"))
+main_kb.add(KeyboardButton("Посмотреть товары"), KeyboardButton("Фото сортов"))
 
 # Клавиатура для выбора действия после добавления товара в корзину
 choose_next_action_kb = ReplyKeyboardMarkup(resize_keyboard=True)
@@ -34,13 +34,24 @@ choose_next_action_kb.add(KeyboardButton("Отменить заказ"))
 # Обработчик команды /start
 @dp.message_handler(commands=['start'])
 async def cmd_start(message: types.Message):
-    await message.answer("Добро пожаловать в магазин! Что вы хотите сделать?", reply_markup=main_kb)
+    # Отправляем фото
+    with open('photos/foto0.png', 'rb') as photo:
+        await message.answer_photo(photo)
+    await message.answer("Welcom Братья и Сестры!\nДоставка ТОПОВЫХ шишек!"
+                         "\nПо острову Панган!\n\n ***используй кнопки внизу***", reply_markup=main_kb)
 
 # Остальной код остается прежним...
 
 # Теперь, после добавления товара в корзину, пользователь увидит клавиатуру choose_next_action_kb, предлагающую добавить еще товар или перейти к оформлению заказа. Если пользователь решит добавить еще товар, он нажмет кнопку "Добавить еще?", и вы снова покажете ему список товаров.
 
 # Оформление заказа теперь доступно только после добавления товара в корзину. Если пользователь нажмет "Оформить заказ", ему будут предложены два варианта: подтвердить или отменить заказ. Если заказ подтвержден, вы можете очистить корзину этого пользователя и вернуть его к основной клавиатуре. Если заказ отменен, вы также можете вернуть пользователя к основной клавиатуре.
+
+@dp.message_handler(lambda msg: msg.text == "Фото сортов")
+async def send_photos(message: types.Message):
+    photos = ["photos/foto1.jpg", "photos/foto2.jpg", "photos/foto3.jpg"]
+    for photo_path in photos:
+        with open(photo_path, 'rb') as photo:
+            await message.answer_photo(photo)
 
 
 # Обработчик для просмотра товаров
@@ -62,7 +73,7 @@ async def view_products(message: types.Message):
             button = InlineKeyboardButton(text=f"{name} - {price}₽", callback_data=f"product_{product_id}")
             kb.add(button)
 
-        await message.answer("Выберите товар:", reply_markup=kb)
+        await message.answer("Выбери сорт:", reply_markup=kb)
 
 
 # Обработчик нажатия на кнопку
@@ -97,24 +108,77 @@ async def process_product_name(message: types.Message):
         await redis.set(str(message.from_user.id), product_id[0])
         await message.answer(f"Сколько грамм {product_name}? Введите число.")
 
+async def get_cart_details(user_id):
+    async with aiosqlite.connect("shopbot.db") as db:
+        cursor = await db.cursor()
+        await cursor.execute("""
+            SELECT products.name, cart_items.quantity, products.price
+            FROM cart_items
+            JOIN products ON cart_items.product_id = products.product_id
+            WHERE cart_id=?
+        """, (user_id,))
+
+        items = await cursor.fetchall()
+
+    details = []
+    for name, quantity, price in items:
+        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
+
+    return "\n".join(details)
+
 @dp.message_handler(lambda message: message.text.isdigit())
 async def handle_quantity(message: types.Message):
     quantity = int(message.text)
     user_id = message.from_user.id
-    product_id = await redis.get(str(user_id))
+    product_id_bytes = await redis.get(str(user_id))
 
-
-    if not product_id:
-        await message.answer("Произошла ошибка. Попробуйте еще раз.")
+    if not product_id_bytes:
+        await message.answer("Произошла ошибка. Не удалось извлечь ID продукта.")
         return
+
+    # Преобразуем product_id из байтовой строки в целочисленное значение
+    product_id = int(product_id_bytes.decode('utf-8'))
+
+    # Добавим вывод product_id для диагностики
+    #await message.answer(f"Debug: product_id = {product_id}")
 
     async with aiosqlite.connect("shopbot.db") as db:
         cursor = await db.cursor()
-        await cursor.execute("INSERT OR IGNORE INTO cart_items(cart_id, product_id, quantity) VALUES (?, ?, ?)", (user_id, product_id, quantity))
-        await cursor.execute("UPDATE cart_items SET quantity=? WHERE cart_id=? AND product_id=?", (quantity, user_id, product_id))
+
+        # Получение информации о продукте
+        await cursor.execute("SELECT name, price FROM products WHERE product_id=?", (product_id,))
+        product_info = await cursor.fetchone()
+
+        if not product_info:
+            await message.answer("Произошла ошибка при извлечении информации о продукте.")
+            return
+
+        product_name, product_price = product_info
+
+        # Получаем текущее количество этого товара в корзине
+        await cursor.execute("SELECT quantity FROM cart_items WHERE cart_id=? AND product_id=?", (user_id, product_id))
+        current_quantity_data = await cursor.fetchone()
+
+        # Если товар уже есть в корзине, обновляем его количество
+        if current_quantity_data:
+            current_quantity = current_quantity_data[0]
+            new_quantity = current_quantity + quantity
+            await cursor.execute("UPDATE cart_items SET quantity=? WHERE cart_id=? AND product_id=?", (new_quantity, user_id, product_id))
+
+        # Если товара еще нет в корзине, добавляем новую запись
+        else:
+            await cursor.execute("INSERT INTO cart_items(cart_id, product_id, quantity) VALUES (?, ?, ?)", (user_id, product_id, quantity))
+
         await db.commit()
 
-    await message.answer(f"Товар добавлен в корзину в количестве {quantity} грамм!", reply_markup=choose_next_action_kb)
+    # Измененное сообщение об успешном добавлении товара в корзину
+    cart_details = await get_cart_details(user_id)
+    await message.answer(f"Товар в корзину:\n{cart_details}", reply_markup=choose_next_action_kb)
+
+
+
+
+
 
 
 # Обработчик для добавления товара в корзину
@@ -181,7 +245,9 @@ async def confirm_checkout(message: types.Message):
     await bot.send_message(OWNER_ID, f"Новый заказ №{order_id} от {user_mention}:\n{order_details}",
                            parse_mode="Markdown")
 
-    await message.answer("Ваш заказ оформлен! В ближайшее время с вами свяжется наш менеджер.", reply_markup=main_kb)
+    await message.answer("Обрабатываем ваш заказ!\n"
+                         "В ближайшее время с вами свяжется наш менеджер!\n"
+                         "Уточним детали и возможное время доставки!", reply_markup=main_kb)
 
 
 # Обработчик команды "Отменить заказ"
@@ -192,7 +258,7 @@ async def cancel_checkout(message: types.Message):
         await cursor.execute("DELETE FROM cart_items WHERE cart_id=?", (message.from_user.id,))
         await db.commit()
 
-    await message.answer("Заказ отменен и ваша корзина очищена.", reply_markup=main_kb)
+    await message.answer("Корзина очищена.", reply_markup=main_kb)
 
 
 async def get_order_details(order_id):
