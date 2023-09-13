@@ -46,9 +46,13 @@ async def cmd_start(message: types.Message):
 
 # Оформление заказа теперь доступно только после добавления товара в корзину. Если пользователь нажмет "Оформить заказ", ему будут предложены два варианта: подтвердить или отменить заказ. Если заказ подтвержден, вы можете очистить корзину этого пользователя и вернуть его к основной клавиатуре. Если заказ отменен, вы также можете вернуть пользователя к основной клавиатуре.
 
+# Обработчик для просмотра фото сортов
 @dp.message_handler(lambda msg: msg.text == "Фото сортов")
 async def send_photos(message: types.Message):
-    photos = ["photos/foto1.jpg", "photos/foto2.jpg", "photos/foto3.jpg"]
+    # Список всех фотографий
+    photos = ["photos/foto1.jpg", "photos/foto2.jpg", "photos/foto3.jpg", "photos/foto4.jpg"]
+
+    # Отправляем каждую фотографию в цикле
     for photo_path in photos:
         with open(photo_path, 'rb') as photo:
             await message.answer_photo(photo)
