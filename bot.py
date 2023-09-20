@@ -80,6 +80,7 @@ async def view_products(message: types.Message):
         await message.answer("Выбери сорт:", reply_markup=kb)
 
 
+
 # Обработчик нажатия на кнопку
 @dp.callback_query_handler(lambda c: c.data.startswith('product_'))
 async def process_product_choice(callback_query: types.CallbackQuery):
@@ -126,7 +127,7 @@ async def get_cart_details(user_id):
 
     details = []
     for name, quantity, price in items:
-        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
+        details.append(f"{name} - {quantity} грамм - {price * quantity}฿")
 
     return "\n".join(details)
 
@@ -247,11 +248,14 @@ async def confirm_checkout(message: types.Message):
 
     # Отправляем детали заказа владельцу бота с ссылкой на пользователя
     await bot.send_message(OWNER_ID, f"Новый заказ №{order_id} от {user_mention}:\n{order_details}",
-                           parse_mode="Markdown")
+                           parse_mode="Markdown", disable_web_page_preview=False)
 
+    # Добавляем ссылку на связь с менеджером в сообщение для пользователя
     await message.answer("Обрабатываем ваш заказ!\n"
                          "В ближайшее время с вами свяжется наш менеджер!\n"
-                         "Уточним детали и возможное время доставки!", reply_markup=main_kb)
+                         "Уточним детали и возможное время доставки\n"
+                         "Если менеджер не ответил, напишите [сюда](https://t.me/Babakoba)!",
+                         reply_markup=main_kb, parse_mode="Markdown", disable_web_page_preview=False)
 
 
 # Обработчик команды "Отменить заказ"
@@ -279,7 +283,7 @@ async def get_order_details(order_id):
 
     details = []
     for name, quantity, price in items:
-        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
+        details.append(f"{name} - {quantity} грамм - {price * quantity}฿")
 
     return "\n".join(details)
 

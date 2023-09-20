@@ -9,12 +9,14 @@ products = [
     ("Afgan kush", 250, "http://example.com/afgan_kush"),
     ("Bruce Buner", 300, "http://example.com/bruce_buner"),
     ("Gorilla Glue", 250, "http://example.com/gorilla_glue"),
+    ("Cannabis Joint set", 300, "http://example.com/cannabis_joint_set"),
 ]
 
 try:
-    # Вставка продуктов в таблицу
+    # Вставка продуктов в таблицу, если их нет в базе данных
     for product in products:
-        if not cursor.execute("SELECT 1 FROM products WHERE name=?", (product[0],)).fetchone():
+        product_name = product[0]
+        if not cursor.execute("SELECT 1 FROM products WHERE name=?", (product_name,)).fetchone():
             cursor.execute("INSERT INTO products (name, price, url) VALUES (?, ?, ?)", product)
 
     # Завершение транзакции
