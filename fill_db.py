@@ -7,7 +7,7 @@ cursor = connection.cursor()
 # Примеры продуктов
 products = [
     ("Afgan kush", 250, "http://example.com/afgan_kush"),
-    ("Bruce Buner", 300, "http://example.com/bruce_buner"),
+    ("Bruce Buner", 250, "http://example.com/bruce_buner"),
     ("Gorilla Glue", 250, "http://example.com/gorilla_glue"),
     ("Cannabis Joint set", 300, "http://example.com/cannabis_joint_set"),
 ]

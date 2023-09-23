@@ -74,11 +74,10 @@ async def view_products(message: types.Message):
         kb = InlineKeyboardMarkup(row_width=1)
         for product_id, name, price in products:
             # Для каждого товара создаем кнопку с обратным вызовом
-            button = InlineKeyboardButton(text=f"{name} - {price}₽", callback_data=f"product_{product_id}")
+            button = InlineKeyboardButton(text=f"{name} - {price}฿", callback_data=f"product_{product_id}")
             kb.add(button)
 
         await message.answer("Выбери сорт:", reply_markup=kb)
-
 
 
 # Обработчик нажатия на кнопку
@@ -113,6 +112,7 @@ async def process_product_name(message: types.Message):
         await redis.set(str(message.from_user.id), product_id[0])
         await message.answer(f"Сколько грамм {product_name}? Введите число.")
 
+
 async def get_cart_details(user_id):
     async with aiosqlite.connect("shopbot.db") as db:
         cursor = await db.cursor()
@@ -127,9 +127,10 @@ async def get_cart_details(user_id):
 
     details = []
     for name, quantity, price in items:
-        details.append(f"{name} - {quantity} грамм - {price * quantity}฿")
+        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
 
     return "\n".join(details)
+
 
 @dp.message_handler(lambda message: message.text.isdigit())
 async def handle_quantity(message: types.Message):
@@ -143,9 +144,6 @@ async def handle_quantity(message: types.Message):
 
     # Преобразуем product_id из байтовой строки в целочисленное значение
     product_id = int(product_id_bytes.decode('utf-8'))
-
-    # Добавим вывод product_id для диагностики
-    #await message.answer(f"Debug: product_id = {product_id}")
 
     async with aiosqlite.connect("shopbot.db") as db:
         cursor = await db.cursor()
@@ -179,11 +177,6 @@ async def handle_quantity(message: types.Message):
     # Измененное сообщение об успешном добавлении товара в корзину
     cart_details = await get_cart_details(user_id)
     await message.answer(f"Товар в корзину:\n{cart_details}", reply_markup=choose_next_action_kb)
-
-
-
-
-
 
 
 # Обработчик для добавления товара в корзину
@@ -247,7 +240,7 @@ async def confirm_checkout(message: types.Message):
     user_mention = f"[{message.from_user.full_name}](tg://user?id={message.from_user.id})"
 
     # Отправляем детали заказа владельцу бота с ссылкой на пользователя
-    await bot.send_message(OWNER_ID, f"Новый заказ №{order_id} от {user_mention}:\n{order_details}",
+    await bot.send_message(OWNER_ID, f"Новый заказ №{order_id} от {user_mention}:\n{order_details.replace('₽', '฿')}",
                            parse_mode="Markdown", disable_web_page_preview=False)
 
     # Добавляем ссылку на связь с менеджером в сообщение для пользователя
@@ -283,7 +276,7 @@ async def get_order_details(order_id):
 
     details = []
     for name, quantity, price in items:
-        details.append(f"{name} - {quantity} грамм - {price * quantity}฿")
+        details.append(f"{name} - {quantity} грамм - {price * quantity}₽")
 
     return "\n".join(details)
 
@@ -306,4 +299,3 @@ if __name__ == '__main__':
         executor.start_polling(dp, skip_updates=True)
     finally:
         loop.run_until_complete(redis.close())
-
